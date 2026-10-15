@@ -7,7 +7,24 @@ O vídeo é mantido sem recodificação e apenas o áudio é convertido para AAC
 ## Como usar
 
 1. Baixe e abra `FixerAudioAMD.exe`.
-2. Selecione o clipe `.mp4` com problema.
-3. Escolha onde salvar e clique em **Corrigir áudio para estéreo**.
+2. Na primeira execução, permita que o app baixe o FFmpeg caso ele ainda não esteja disponível.
+3. Selecione o clipe `.mp4` com problema.
+4. Escolha onde salvar e clique em **Corrigir áudio para estéreo**.
 
-O FFmpeg precisa estar instalado no Windows ou o arquivo `ffmpeg.exe` deve ficar na mesma pasta do programa.
+## FFmpeg
+
+O app oferece o download automático do FFmpeg na primeira execução. Se preferir instalar manualmente, use uma destas opções:
+
+```powershell
+winget install --id Gyan.FFmpeg.Essentials --exact
+```
+
+```powershell
+choco install ffmpeg
+```
+
+```powershell
+scoop install ffmpeg-essentials
+```
+
+Também é possível baixar uma versão para Windows pela [página oficial do FFmpeg](https://ffmpeg.org/download.html#build-windows) e deixar `ffmpeg.exe` ao lado do programa.

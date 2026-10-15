@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
+import urllib.request
+import zipfile
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox
@@ -14,6 +18,8 @@ from tkinter import filedialog, messagebox
 APP_TITLE = "Fixer de Áudio AMD ReLive"
 WINDOW_WIDTH = 780
 WINDOW_HEIGHT = 620
+FFMPEG_DOWNLOAD_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+FFMPEG_CHECKSUM_URL = f"{FFMPEG_DOWNLOAD_URL}.sha256"
 
 COLORS = {
     "bg": "#101014",
@@ -36,9 +42,30 @@ COLORS = {
     "red": "#FF4D24",
 }
 
-FONT_UI = "Segoe UI"
-FONT_DISPLAY = "Bahnschrift Condensed"
-FONT_MONO = "Consolas"
+FONT_LOGO = "Century Gothic"
+FONT_UI = "Barlow"
+FONT_DISPLAY = "Barlow Semi Condensed"
+FONT_MONO = "JetBrains Mono"
+
+
+def resource_path(relative_path: str) -> Path:
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return base / relative_path
+
+
+def load_private_fonts() -> None:
+    if os.name != "nt":
+        return
+    add_font = ctypes.windll.gdi32.AddFontResourceExW
+    for font_name in (
+        "Barlow-Regular.ttf",
+        "Barlow-SemiBold.ttf",
+        "BarlowSemiCondensed-Bold.ttf",
+        "JetBrainsMono-Regular.ttf",
+    ):
+        font_path = resource_path(f"fonts/{font_name}")
+        if font_path.is_file():
+            add_font(str(font_path), 0x10, 0)
 
 
 class ActionButton(tk.Canvas):
@@ -141,11 +168,14 @@ class FixerAudioApp:
         self._drag_x = 0
         self._drag_y = 0
         self._conversion_active = False
+        self._download_active = False
         self._progress_step = 0
         self._progress_job: str | None = None
+        self._ffmpeg_path = self._locate_ffmpeg()
 
         self._build_ui()
         self.root.after(50, self._apply_windows_style)
+        self.root.after(450, self._check_ffmpeg_on_startup)
 
     def _center_window(self) -> None:
         screen_w = self.root.winfo_screenwidth()
@@ -306,7 +336,7 @@ class FixerAudioApp:
             text=APP_TITLE,
             bg=COLORS["titlebar"],
             fg=COLORS["text"],
-            font=(FONT_UI, 10, "bold"),
+            font=(FONT_LOGO, 10, "bold"),
         )
         title.pack(side="left")
         title.bind("<ButtonPress-1>", self._start_drag)
@@ -414,9 +444,9 @@ class FixerAudioApp:
             self.root.iconify()
 
     def _request_close(self) -> None:
-        if self._conversion_active and not messagebox.askyesno(
+        if (self._conversion_active or self._download_active) and not messagebox.askyesno(
             APP_TITLE,
-            "A conversão ainda está em andamento. Deseja fechar mesmo assim?",
+            "Uma operação ainda está em andamento. Deseja fechar mesmo assim?",
             parent=self.root,
         ):
             return
@@ -456,7 +486,13 @@ class FixerAudioApp:
             self.destino.set(file_path)
 
     @staticmethod
-    def _locate_ffmpeg() -> str | None:
+    def _private_ffmpeg_path() -> Path:
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        base = Path(local_app_data) if local_app_data else Path.home() / "AppData" / "Local"
+        return base / "FixerAudioAMD" / "bin" / "ffmpeg.exe"
+
+    @classmethod
+    def _locate_ffmpeg(cls) -> str | None:
         executable = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
         app_dir = (
             Path(sys.executable).resolve().parent
@@ -464,7 +500,119 @@ class FixerAudioApp:
             else Path(__file__).resolve().parent
         )
         local = app_dir / executable
-        return str(local) if local.is_file() else shutil.which(executable)
+        if local.is_file():
+            return str(local)
+        private = cls._private_ffmpeg_path()
+        if private.is_file():
+            return str(private)
+        return shutil.which(executable)
+
+    def _check_ffmpeg_on_startup(self) -> None:
+        if not self._ffmpeg_path:
+            self._offer_ffmpeg_download()
+
+    def _offer_ffmpeg_download(self) -> None:
+        if self._download_active:
+            return
+        download = messagebox.askyesno(
+            "FFmpeg necessário",
+            "O FFmpeg é necessário para corrigir o áudio e ainda não está disponível.\n\n"
+            "Deseja baixar e configurar automaticamente agora? O download tem aproximadamente 110 MB.",
+            parent=self.root,
+        )
+        if download:
+            self._start_ffmpeg_download()
+        else:
+            self._set_status("error", "FFmpeg necessário para converter", "AUSENTE")
+
+    def _start_ffmpeg_download(self) -> None:
+        self._download_active = True
+        self._set_controls_enabled(False)
+        self.convert_button.configure_state(False, "BAIXANDO FFMPEG…")
+        self._set_status("working", "Preparando download do FFmpeg", "0%")
+        self._draw_progress(0)
+        threading.Thread(target=self._download_ffmpeg, daemon=True).start()
+
+    def _download_ffmpeg(self) -> None:
+        install_path = self._private_ffmpeg_path()
+        install_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_dir = Path(tempfile.mkdtemp(prefix="download-", dir=install_path.parent.parent))
+        archive_path = temporary_dir / "ffmpeg.zip"
+        extracted_path = temporary_dir / "ffmpeg.exe"
+
+        try:
+            request = urllib.request.Request(
+                FFMPEG_DOWNLOAD_URL,
+                headers={"User-Agent": "FixerAudioAMD/1.0"},
+            )
+            with urllib.request.urlopen(request, timeout=60) as response, archive_path.open("wb") as archive:
+                total = int(response.headers.get("Content-Length", "0"))
+                downloaded = 0
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    archive.write(chunk)
+                    downloaded += len(chunk)
+                    if total:
+                        fraction = min(downloaded / total, 0.99)
+                        self.root.after(0, self._update_download_progress, fraction)
+
+            checksum_request = urllib.request.Request(
+                FFMPEG_CHECKSUM_URL,
+                headers={"User-Agent": "FixerAudioAMD/1.0"},
+            )
+            with urllib.request.urlopen(checksum_request, timeout=30) as response:
+                expected_checksum = response.read().decode("ascii").strip().split()[0].lower()
+            digest = hashlib.sha256()
+            with archive_path.open("rb") as archive:
+                for chunk in iter(lambda: archive.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            actual_checksum = digest.hexdigest().lower()
+            if actual_checksum != expected_checksum:
+                raise RuntimeError("A verificação de segurança do download falhou.")
+
+            with zipfile.ZipFile(archive_path) as package:
+                member = next(
+                    (name for name in package.namelist() if name.lower().endswith("/bin/ffmpeg.exe")),
+                    None,
+                )
+                if member is None:
+                    raise RuntimeError("O pacote baixado não contém ffmpeg.exe.")
+                with package.open(member) as source, extracted_path.open("wb") as destination:
+                    shutil.copyfileobj(source, destination)
+
+            os.replace(extracted_path, install_path)
+            self.root.after(0, self._ffmpeg_download_complete, str(install_path))
+        except Exception as error:
+            self.root.after(0, self._ffmpeg_download_failed, str(error))
+        finally:
+            shutil.rmtree(temporary_dir, ignore_errors=True)
+
+    def _update_download_progress(self, fraction: float) -> None:
+        self._draw_progress(fraction)
+        percent = max(1, min(round(fraction * 100), 99))
+        self._set_status("working", "Baixando FFmpeg", f"{percent}%")
+
+    def _ffmpeg_download_complete(self, ffmpeg_path: str) -> None:
+        self._ffmpeg_path = ffmpeg_path
+        self._download_active = False
+        self._set_controls_enabled(True)
+        self.convert_button.configure_state(True, "CORRIGIR ÁUDIO PARA ESTÉREO")
+        self._draw_progress(1)
+        self._set_status("success", "FFmpeg instalado. Pronto para converter", "100%")
+
+    def _ffmpeg_download_failed(self, error: str) -> None:
+        self._download_active = False
+        self._set_controls_enabled(True)
+        self.convert_button.configure_state(True, "CORRIGIR ÁUDIO PARA ESTÉREO")
+        self._draw_progress(0)
+        self._set_status("error", "Não foi possível instalar o FFmpeg", "ERRO")
+        messagebox.showerror(
+            "Falha no download",
+            f"Não foi possível baixar ou validar o FFmpeg.\n\n{error}",
+            parent=self.root,
+        )
 
     @staticmethod
     def _subprocess_options() -> dict[str, object]:
@@ -495,13 +643,9 @@ class FixerAudioApp:
         ):
             return
 
-        ffmpeg = self._locate_ffmpeg()
+        ffmpeg = self._ffmpeg_path or self._locate_ffmpeg()
         if not ffmpeg:
-            messagebox.showerror(
-                APP_TITLE,
-                "FFmpeg não encontrado. Instale-o no PATH ou coloque ffmpeg.exe ao lado do programa.",
-                parent=self.root,
-            )
+            self._offer_ffmpeg_download()
             return
 
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -540,10 +684,7 @@ class FixerAudioApp:
 
     def _set_converting(self, converting: bool) -> None:
         self._conversion_active = converting
-        self.origin_entry.configure(state="disabled" if converting else "normal")
-        self.destination_entry.configure(state="disabled" if converting else "normal")
-        self.origin_button.configure_state(not converting)
-        self.destination_button.configure_state(not converting)
+        self._set_controls_enabled(not converting)
         self.convert_button.configure_state(
             not converting,
             "CONVERTENDO ÁUDIO…" if converting else "CORRIGIR ÁUDIO PARA ESTÉREO",
@@ -553,6 +694,13 @@ class FixerAudioApp:
             self._animate_progress()
         else:
             self._stop_progress_animation()
+
+    def _set_controls_enabled(self, enabled: bool) -> None:
+        state = "normal" if enabled else "disabled"
+        self.origin_entry.configure(state=state)
+        self.destination_entry.configure(state=state)
+        self.origin_button.configure_state(enabled)
+        self.destination_button.configure_state(enabled)
 
     def _draw_progress(self, fraction: float, offset: float = 0.0) -> None:
         self.progress.delete("all")
@@ -607,6 +755,7 @@ class FixerAudioApp:
 
 
 def main() -> None:
+    load_private_fonts()
     root = tk.Tk()
     FixerAudioApp(root)
     root.mainloop()
