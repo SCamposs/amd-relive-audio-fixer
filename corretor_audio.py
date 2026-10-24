@@ -17,7 +17,7 @@ from tkinter import filedialog, messagebox
 
 APP_TITLE = "Fixer de Áudio AMD ReLive"
 WINDOW_WIDTH = 780
-WINDOW_HEIGHT = 620
+WINDOW_HEIGHT = 650
 FFMPEG_DOWNLOAD_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 FFMPEG_CHECKSUM_URL = f"{FFMPEG_DOWNLOAD_URL}.sha256"
 
@@ -163,11 +163,15 @@ class FixerAudioApp:
 
         self.origem = tk.StringVar()
         self.destino = tk.StringVar()
+        self.metadata_selection = tk.StringVar(value="Nenhum arquivo selecionado")
         self.status = tk.StringVar(value="Aguardando um clipe MP4")
         self.percentual = tk.StringVar(value="—")
+        self.metadata_files: list[Path] = []
+        self._current_mode = "audio"
         self._drag_x = 0
         self._drag_y = 0
         self._conversion_active = False
+        self._metadata_active = False
         self._download_active = False
         self._progress_step = 0
         self._progress_job: str | None = None
@@ -213,59 +217,18 @@ class FixerAudioApp:
         shell.pack(fill="both", expand=True)
         self._build_titlebar(shell)
 
-        content = tk.Frame(shell, bg=COLORS["bg"], padx=36, pady=30)
+        content = tk.Frame(shell, bg=COLORS["bg"], padx=36, pady=22)
         content.pack(fill="both", expand=True)
 
-        tk.Label(
-            content,
-            text="CONVERSÃO DE ÁUDIO",
-            bg=COLORS["bg"],
-            fg=COLORS["text"],
-            font=(FONT_DISPLAY, 25, "bold"),
-            anchor="w",
-        ).pack(fill="x")
-        tk.Label(
-            content,
-            text="Repare faixas 7.1 sem som capturadas pelo AMD ReLive.",
-            bg=COLORS["bg"],
-            fg=COLORS["muted"],
-            font=(FONT_UI, 11),
-            anchor="w",
-        ).pack(fill="x", pady=(2, 18))
-        tk.Frame(content, bg=COLORS["line"], height=1).pack(fill="x", pady=(0, 22))
+        self._build_tabs(content)
+        self.panel_host = tk.Frame(content, bg=COLORS["bg"])
+        self.panel_host.pack(fill="both", expand=True, pady=(22, 0))
 
-        self._build_file_field(
-            content,
-            "Vídeo original",
-            "áudio 7.1 sem som",
-            self.origem,
-            "PROCURAR…",
-            self.selecionar_origem,
-            "origin",
-        )
-        self._build_file_field(
-            content,
-            "Salvar vídeo corrigido em",
-            None,
-            self.destino,
-            "ALTERAR…",
-            self.selecionar_destino,
-            "destination",
-        )
-
-        self.convert_button = ActionButton(
-            content,
-            "CORRIGIR ÁUDIO PARA ESTÉREO",
-            self.iniciar_conversao,
-            width=700,
-            height=64,
-            bg=COLORS["primary"],
-            hover_bg=COLORS["primary_hover"],
-            fg="#111115",
-            font=(FONT_UI, 13, "bold"),
-            radius=10,
-        )
-        self.convert_button.pack(fill="x", pady=(6, 25))
+        self.audio_panel = tk.Frame(self.panel_host, bg=COLORS["bg"])
+        self.metadata_panel = tk.Frame(self.panel_host, bg=COLORS["bg"])
+        self._build_audio_panel(self.audio_panel)
+        self._build_metadata_panel(self.metadata_panel)
+        self.audio_panel.pack(fill="both", expand=True)
 
         self.progress = tk.Canvas(
             content, height=8, bg=COLORS["surface"], bd=0, highlightthickness=0
@@ -302,13 +265,14 @@ class FixerAudioApp:
         footer = tk.Frame(shell, bg=COLORS["titlebar"], height=52)
         footer.pack(fill="x", side="bottom")
         footer.pack_propagate(False)
-        tk.Label(
+        self.footer_mode_label = tk.Label(
             footer,
             text="STEREO REMUX  •  AAC 2.0",
             bg=COLORS["titlebar"],
             fg=COLORS["subtle"],
             font=(FONT_MONO, 9),
-        ).pack(side="left", padx=30)
+        )
+        self.footer_mode_label.pack(side="left", padx=30)
         tk.Label(
             footer,
             text="AMD RELIVE UTILITY",
@@ -316,6 +280,183 @@ class FixerAudioApp:
             fg=COLORS["subtle"],
             font=(FONT_MONO, 9),
         ).pack(side="right", padx=30)
+
+    def _build_tabs(self, master: tk.Misc) -> None:
+        tabs = tk.Frame(master, bg=COLORS["bg"], height=38)
+        tabs.pack(fill="x")
+        tabs.pack_propagate(False)
+
+        self.audio_tab = self._create_tab(tabs, "CORRIGIR ÁUDIO", "audio")
+        self.audio_tab.pack(side="left", fill="y")
+        self.metadata_tab = self._create_tab(tabs, "LIMPAR METADADOS", "metadata")
+        self.metadata_tab.pack(side="left", fill="y", padx=(8, 0))
+        self._update_tabs()
+
+    def _create_tab(self, master: tk.Misc, text: str, mode: str) -> tk.Frame:
+        tab = tk.Frame(master, bg=COLORS["bg"], cursor="hand2")
+        label = tk.Label(
+            tab,
+            text=text,
+            bg=COLORS["bg"],
+            fg=COLORS["muted"],
+            font=(FONT_UI, 10, "bold"),
+            padx=14,
+        )
+        label.pack(fill="both", expand=True)
+        indicator = tk.Frame(tab, bg=COLORS["bg"], height=3)
+        indicator.pack(fill="x", side="bottom")
+        for widget in (tab, label, indicator):
+            widget.bind("<Button-1>", lambda _event, selected=mode: self._switch_mode(selected))
+        tab._label = label
+        tab._indicator = indicator
+        return tab
+
+    def _update_tabs(self) -> None:
+        for mode, tab in (("audio", self.audio_tab), ("metadata", self.metadata_tab)):
+            active = mode == self._current_mode
+            tab._label.configure(fg=COLORS["text"] if active else COLORS["muted"])
+            tab._indicator.configure(bg=COLORS["primary"] if active else COLORS["bg"])
+
+    def _switch_mode(self, mode: str) -> None:
+        if mode == self._current_mode or self._operation_active():
+            return
+        self._current_mode = mode
+        self.audio_panel.pack_forget()
+        self.metadata_panel.pack_forget()
+        if mode == "audio":
+            self.audio_panel.pack(fill="both", expand=True)
+            self.status.set("Aguardando um clipe MP4")
+            self.footer_mode_label.configure(text="STEREO REMUX  •  AAC 2.0")
+        else:
+            self.metadata_panel.pack(fill="both", expand=True)
+            self.status.set("Selecione arquivos de áudio para limpar")
+            self.footer_mode_label.configure(text="METADATA CLEAN  •  STREAM COPY")
+        self.percentual.set("—")
+        self._draw_progress(0)
+        self._set_status("idle", self.status.get(), "—")
+        self._update_tabs()
+
+    def _build_audio_panel(self, content: tk.Misc) -> None:
+        tk.Label(
+            content,
+            text="CONVERSÃO DE ÁUDIO",
+            bg=COLORS["bg"],
+            fg=COLORS["text"],
+            font=(FONT_DISPLAY, 25, "bold"),
+            anchor="w",
+        ).pack(fill="x")
+        tk.Label(
+            content,
+            text="Repare faixas 7.1 sem som capturadas pelo AMD ReLive.",
+            bg=COLORS["bg"],
+            fg=COLORS["muted"],
+            font=(FONT_UI, 11),
+            anchor="w",
+        ).pack(fill="x", pady=(2, 16))
+        tk.Frame(content, bg=COLORS["line"], height=1).pack(fill="x", pady=(0, 18))
+
+        self._build_file_field(
+            content,
+            "Vídeo original",
+            "áudio 7.1 sem som",
+            self.origem,
+            "PROCURAR…",
+            self.selecionar_origem,
+            "origin",
+        )
+        self._build_file_field(
+            content,
+            "Salvar vídeo corrigido em",
+            None,
+            self.destino,
+            "ALTERAR…",
+            self.selecionar_destino,
+            "destination",
+        )
+
+        self.convert_button = ActionButton(
+            content,
+            "CORRIGIR ÁUDIO PARA ESTÉREO",
+            self.iniciar_conversao,
+            width=700,
+            height=64,
+            bg=COLORS["primary"],
+            hover_bg=COLORS["primary_hover"],
+            fg="#111115",
+            font=(FONT_UI, 13, "bold"),
+            radius=10,
+        )
+        self.convert_button.pack(fill="x", pady=(6, 25))
+
+    def _build_metadata_panel(self, content: tk.Misc) -> None:
+        tk.Label(
+            content,
+            text="LIMPEZA DE METADADOS",
+            bg=COLORS["bg"],
+            fg=COLORS["text"],
+            font=(FONT_DISPLAY, 25, "bold"),
+            anchor="w",
+        ).pack(fill="x")
+        tk.Label(
+            content,
+            text="Remova tags incorporadas sem recodificar o áudio.",
+            bg=COLORS["bg"],
+            fg=COLORS["muted"],
+            font=(FONT_UI, 11),
+            anchor="w",
+        ).pack(fill="x", pady=(2, 16))
+        tk.Frame(content, bg=COLORS["line"], height=1).pack(fill="x", pady=(0, 18))
+
+        tk.Label(
+            content,
+            text="Arquivos de áudio",
+            bg=COLORS["bg"],
+            fg=COLORS["text"],
+            font=(FONT_UI, 10, "bold"),
+            anchor="w",
+        ).pack(fill="x", pady=(0, 8))
+        row = tk.Frame(content, bg=COLORS["bg"])
+        row.pack(fill="x", pady=(0, 18))
+        field = tk.Frame(row, bg=COLORS["line"], padx=1, pady=1)
+        field.pack(side="left", fill="x", expand=True)
+        self.metadata_entry = tk.Entry(
+            field,
+            textvariable=self.metadata_selection,
+            state="readonly",
+            readonlybackground=COLORS["surface"],
+            fg=COLORS["text"],
+            relief="flat",
+            bd=0,
+            font=(FONT_MONO, 10),
+        )
+        self.metadata_entry.pack(fill="x", ipady=15, padx=14)
+        self.metadata_select_button = ActionButton(
+            row,
+            "SELECIONAR…",
+            self.selecionar_arquivos_metadados,
+            width=145,
+            height=52,
+            bg=COLORS["button"],
+            hover_bg=COLORS["button_hover"],
+            fg=COLORS["button_text"],
+            font=(FONT_UI, 9, "bold"),
+            radius=9,
+        )
+        self.metadata_select_button.pack(side="right", padx=(12, 0))
+
+        self.metadata_clean_button = ActionButton(
+            content,
+            "REMOVER METADADOS",
+            self.iniciar_limpeza_metadados,
+            width=700,
+            height=64,
+            bg=COLORS["primary"],
+            hover_bg=COLORS["primary_hover"],
+            fg="#111115",
+            font=(FONT_UI, 13, "bold"),
+            radius=10,
+        )
+        self.metadata_clean_button.pack(fill="x", pady=(4, 25))
 
     def _build_titlebar(self, shell: tk.Frame) -> None:
         titlebar = tk.Frame(shell, bg=COLORS["titlebar"], height=64)
@@ -444,7 +585,7 @@ class FixerAudioApp:
             self.root.iconify()
 
     def _request_close(self) -> None:
-        if (self._conversion_active or self._download_active) and not messagebox.askyesno(
+        if self._operation_active() and not messagebox.askyesno(
             APP_TITLE,
             "Uma operação ainda está em andamento. Deseja fechar mesmo assim?",
             parent=self.root,
@@ -485,6 +626,26 @@ class FixerAudioApp:
         if file_path:
             self.destino.set(file_path)
 
+    def selecionar_arquivos_metadados(self) -> None:
+        file_paths = filedialog.askopenfilenames(
+            parent=self.root,
+            title="Selecione os arquivos de áudio",
+            initialdir=self._downloads_folder(),
+            filetypes=(
+                ("Arquivos de áudio", "*.mp3 *.flac *.wav *.m4a *.aac *.ogg *.opus *.wma"),
+                ("Todos os arquivos", "*.*"),
+            ),
+        )
+        if not file_paths:
+            return
+        self.metadata_files = [Path(file_path) for file_path in file_paths]
+        if len(self.metadata_files) == 1:
+            summary = str(self.metadata_files[0])
+        else:
+            summary = f"{len(self.metadata_files)} arquivos selecionados"
+        self.metadata_selection.set(summary)
+        self._set_status("ready", "Pronto para remover os metadados", "0%")
+
     @staticmethod
     def _private_ffmpeg_path() -> Path:
         local_app_data = os.environ.get("LOCALAPPDATA")
@@ -508,27 +669,33 @@ class FixerAudioApp:
         return shutil.which(executable)
 
     def _check_ffmpeg_on_startup(self) -> None:
-        if not self._ffmpeg_path:
+        if self._current_mode == "audio" and not self._ffmpeg_path:
             self._offer_ffmpeg_download()
 
     def _offer_ffmpeg_download(self) -> None:
         if self._download_active:
             return
+        purpose = "remover metadados" if self._current_mode == "metadata" else "corrigir o áudio"
         download = messagebox.askyesno(
             "FFmpeg necessário",
-            "O FFmpeg é necessário para corrigir o áudio e ainda não está disponível.\n\n"
+            f"O FFmpeg é necessário para {purpose} e ainda não está disponível.\n\n"
             "Deseja baixar e configurar automaticamente agora? O download tem aproximadamente 110 MB.",
             parent=self.root,
         )
         if download:
             self._start_ffmpeg_download()
         else:
-            self._set_status("error", "FFmpeg necessário para converter", "AUSENTE")
+            self._set_status("error", f"FFmpeg necessário para {purpose}", "AUSENTE")
 
     def _start_ffmpeg_download(self) -> None:
         self._download_active = True
         self._set_controls_enabled(False)
-        self.convert_button.configure_state(False, "BAIXANDO FFMPEG…")
+        if self._current_mode == "metadata":
+            self.convert_button.configure_state(False)
+            self.metadata_clean_button.configure_state(False, "BAIXANDO FFMPEG…")
+        else:
+            self.convert_button.configure_state(False, "BAIXANDO FFMPEG…")
+            self.metadata_clean_button.configure_state(False)
         self._set_status("working", "Preparando download do FFmpeg", "0%")
         self._draw_progress(0)
         threading.Thread(target=self._download_ffmpeg, daemon=True).start()
@@ -597,15 +764,18 @@ class FixerAudioApp:
     def _ffmpeg_download_complete(self, ffmpeg_path: str) -> None:
         self._ffmpeg_path = ffmpeg_path
         self._download_active = False
-        self._set_controls_enabled(True)
-        self.convert_button.configure_state(True, "CORRIGIR ÁUDIO PARA ESTÉREO")
+        self._restore_controls()
         self._draw_progress(1)
-        self._set_status("success", "FFmpeg instalado. Pronto para converter", "100%")
+        ready_text = (
+            "FFmpeg instalado. Pronto para limpar"
+            if self._current_mode == "metadata"
+            else "FFmpeg instalado. Pronto para converter"
+        )
+        self._set_status("success", ready_text, "100%")
 
     def _ffmpeg_download_failed(self, error: str) -> None:
         self._download_active = False
-        self._set_controls_enabled(True)
-        self.convert_button.configure_state(True, "CORRIGIR ÁUDIO PARA ESTÉREO")
+        self._restore_controls()
         self._draw_progress(0)
         self._set_status("error", "Não foi possível instalar o FFmpeg", "ERRO")
         messagebox.showerror(
@@ -682,6 +852,141 @@ class FixerAudioApp:
         except OSError as error:
             self.root.after(0, self._conversion_failed, str(error))
 
+    def iniciar_limpeza_metadados(self) -> None:
+        valid_files = [path for path in self.metadata_files if path.is_file()]
+        if not valid_files:
+            messagebox.showwarning(
+                APP_TITLE,
+                "Selecione pelo menos um arquivo de áudio válido.",
+                parent=self.root,
+            )
+            return
+
+        ffmpeg = self._ffmpeg_path or self._locate_ffmpeg()
+        if not ffmpeg:
+            self._offer_ffmpeg_download()
+            return
+
+        count = len(valid_files)
+        if not messagebox.askyesno(
+            "Confirmar limpeza",
+            f"Remover os metadados incorporados de {count} arquivo(s)?\n\n"
+            "O áudio não será recodificado e não perderá qualidade.\n"
+            "Os próprios arquivos serão substituídos e nenhum backup será criado.",
+            parent=self.root,
+        ):
+            return
+
+        self._set_metadata_cleaning(True)
+        threading.Thread(
+            target=self._clean_metadata_in_background,
+            args=(ffmpeg, valid_files),
+            daemon=True,
+        ).start()
+
+    def _clean_metadata_in_background(
+        self,
+        ffmpeg: str,
+        files: list[Path],
+    ) -> None:
+        errors: list[str] = []
+        success_count = 0
+        for index, file_path in enumerate(files, start=1):
+            temporary_handle = tempfile.NamedTemporaryFile(
+                prefix=f".{file_path.stem}-metadata-",
+                suffix=file_path.suffix,
+                dir=file_path.parent,
+                delete=False,
+            )
+            temporary_path = Path(temporary_handle.name)
+            temporary_handle.close()
+            temporary_path.unlink(missing_ok=True)
+            command = [
+                ffmpeg,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-nostdin",
+                "-y",
+                "-i",
+                str(file_path),
+                "-map",
+                "0:a",
+                "-map_metadata",
+                "-1",
+                "-map_metadata:s",
+                "-1",
+                "-map_chapters",
+                "-1",
+                "-c:a",
+                "copy",
+                "-fflags",
+                "+bitexact",
+                "-flags:a",
+                "+bitexact",
+            ]
+            if file_path.suffix.lower() == ".mp3":
+                command.extend(("-id3v2_version", "0"))
+            command.append(str(temporary_path))
+            try:
+                result = subprocess.run(
+                    command,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    check=False,
+                    **self._subprocess_options(),
+                )
+                if result.returncode == 0:
+                    shutil.copystat(file_path, temporary_path)
+                    os.replace(temporary_path, file_path)
+                    success_count += 1
+                else:
+                    detail = result.stderr.strip() or "Erro desconhecido"
+                    errors.append(f"{file_path.name}: {detail}")
+            except OSError as error:
+                errors.append(f"{file_path.name}: {error}")
+            finally:
+                temporary_path.unlink(missing_ok=True)
+            fraction = index / len(files)
+            self.root.after(0, self._update_metadata_progress, fraction, index, len(files))
+
+        self.root.after(0, self._metadata_cleanup_complete, success_count, errors)
+
+    def _update_metadata_progress(self, fraction: float, current: int, total: int) -> None:
+        self._draw_progress(fraction)
+        self._set_status("working", f"Limpando arquivo {current} de {total}", f"{round(fraction * 100)}%")
+
+    def _metadata_cleanup_complete(
+        self,
+        success_count: int,
+        errors: list[str],
+    ) -> None:
+        self._set_metadata_cleaning(False)
+        if errors:
+            self._draw_progress(0)
+            self._set_status("error", f"{success_count} arquivo(s) limpo(s), {len(errors)} falha(s)", "ERRO")
+            details = "\n".join(errors)
+            if len(details) > 1400:
+                details = f"{details[:1400]}\n\n[Mensagem resumida]"
+            messagebox.showerror(
+                APP_TITLE,
+                f"Alguns arquivos não puderam ser processados:\n\n{details}",
+                parent=self.root,
+            )
+            return
+
+        self._draw_progress(1)
+        self._set_status("success", f"Metadados removidos de {success_count} arquivo(s)", "100%")
+        messagebox.showinfo(
+            APP_TITLE,
+            f"Limpeza concluída em {success_count} arquivo(s).",
+            parent=self.root,
+        )
+
     def _set_converting(self, converting: bool) -> None:
         self._conversion_active = converting
         self._set_controls_enabled(not converting)
@@ -689,11 +994,32 @@ class FixerAudioApp:
             not converting,
             "CONVERTENDO ÁUDIO…" if converting else "CORRIGIR ÁUDIO PARA ESTÉREO",
         )
+        self.metadata_clean_button.configure_state(not converting)
         if converting:
             self._set_status("working", "Convertendo áudio 7.1 para estéreo", "EM CURSO")
             self._animate_progress()
         else:
             self._stop_progress_animation()
+
+    def _set_metadata_cleaning(self, cleaning: bool) -> None:
+        self._metadata_active = cleaning
+        self._set_controls_enabled(not cleaning)
+        self.convert_button.configure_state(not cleaning)
+        self.metadata_clean_button.configure_state(
+            not cleaning,
+            "REMOVENDO METADADOS…" if cleaning else "REMOVER METADADOS",
+        )
+        if cleaning:
+            self._set_status("working", "Removendo metadados", "EM CURSO")
+            self._draw_progress(0)
+
+    def _operation_active(self) -> bool:
+        return self._conversion_active or self._metadata_active or self._download_active
+
+    def _restore_controls(self) -> None:
+        self._set_controls_enabled(True)
+        self.convert_button.configure_state(True, "CORRIGIR ÁUDIO PARA ESTÉREO")
+        self.metadata_clean_button.configure_state(True, "REMOVER METADADOS")
 
     def _set_controls_enabled(self, enabled: bool) -> None:
         state = "normal" if enabled else "disabled"
@@ -701,6 +1027,7 @@ class FixerAudioApp:
         self.destination_entry.configure(state=state)
         self.origin_button.configure_state(enabled)
         self.destination_button.configure_state(enabled)
+        self.metadata_select_button.configure_state(enabled)
 
     def _draw_progress(self, fraction: float, offset: float = 0.0) -> None:
         self.progress.delete("all")
@@ -714,7 +1041,7 @@ class FixerAudioApp:
             self.progress.create_rectangle(start, 0, start + segment, 8, fill=COLORS["primary"], outline="")
 
     def _animate_progress(self) -> None:
-        if not self._conversion_active:
+        if not (self._conversion_active or self._metadata_active):
             return
         self._progress_step = (self._progress_step + 1) % 100
         phase = self._progress_step / 99
