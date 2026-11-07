@@ -1,12 +1,12 @@
 # Fixer de Áudio AMD ReLive
 
-Utilitário simples para Windows que corrige clipes gravados pelo AMD ReLive que abrem sem som em players comuns por causa da faixa de áudio multicanal 7.1. Também remove metadados incorporados de arquivos de áudio sem recodificar o conteúdo.
+Utilitário simples para Windows que corrige clipes gravados pelo AMD ReLive que abrem sem som em players comuns por causa da faixa de áudio multicanal 7.1. Também remove metadados incorporados de arquivos de áudio e vídeo sem recodificar o conteúdo.
 
 O vídeo é mantido sem recodificação e apenas o áudio é convertido para AAC estéreo (2 canais). Fiz esta ferramenta para corrigir meus clipes rapidamente, sem precisar abri-los sempre em players específicos para HEVC.
 
 ## Corrigir áudio do AMD ReLive
 
-1. Baixe e abra `FixerAudioAMD.exe`.
+1. Baixe e execute `FixerAudioAMD-Setup.exe` na página de [Releases](https://github.com/SCamposs/amd-relive-audio-fixer/releases).
 2. Na primeira execução, permita que o app baixe o FFmpeg caso ele ainda não esteja disponível.
 3. Selecione o clipe `.mp4` com problema.
 4. Escolha onde salvar e clique em **Corrigir áudio para estéreo**.
@@ -14,10 +14,14 @@ O vídeo é mantido sem recodificação e apenas o áudio é convertido para AAC
 ## Remover metadados
 
 1. Abra a aba **Limpar metadados**.
-2. Selecione um ou mais arquivos de áudio.
+2. Selecione um ou mais arquivos de áudio ou vídeo.
 3. Clique em **Remover metadados** e confirme.
 
-A limpeza sobrescreve os próprios arquivos, sem criar backup. O áudio não é recodificado, portanto não há perda de qualidade.
+A limpeza sobrescreve os próprios arquivos, sem criar backup. Os fluxos de áudio e vídeo não são recodificados, portanto não há perda de qualidade.
+
+## Atualizações
+
+O app consulta a versão mais recente no GitHub sempre que é aberto. Quando há uma atualização, uma bolinha aparece na barra de título; clique nela para baixar e abrir o novo instalador.
 
 ## FFmpeg
 

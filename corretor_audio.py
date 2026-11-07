@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -16,10 +17,17 @@ from tkinter import filedialog, messagebox
 
 
 APP_TITLE = "Fixer de Áudio AMD ReLive"
+APP_VERSION = "1.1.0"
 WINDOW_WIDTH = 780
 WINDOW_HEIGHT = 650
 FFMPEG_DOWNLOAD_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 FFMPEG_CHECKSUM_URL = f"{FFMPEG_DOWNLOAD_URL}.sha256"
+GITHUB_LATEST_RELEASE_API = "https://api.github.com/repos/SCamposs/amd-relive-audio-fixer/releases/latest"
+UPDATE_ASSET_NAME = "FixerAudioAMD-Setup.exe"
+MEDIA_FILE_PATTERNS = (
+    "*.mp3 *.flac *.wav *.m4a *.aac *.ogg *.opus *.wma "
+    "*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.wmv *.flv *.ts *.mts *.m2ts *.mpeg *.mpg"
+)
 
 COLORS = {
     "bg": "#101014",
@@ -156,6 +164,9 @@ class FixerAudioApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title(APP_TITLE)
+        icon_path = resource_path("assets/app-icon.ico")
+        if icon_path.is_file():
+            self.root.iconbitmap(default=str(icon_path))
         self.root.configure(bg=COLORS["bg"])
         self.root.overrideredirect(True)
         self.root.resizable(False, False)
@@ -173,6 +184,8 @@ class FixerAudioApp:
         self._conversion_active = False
         self._metadata_active = False
         self._download_active = False
+        self._update_download_active = False
+        self._available_update: dict[str, str | int | None] | None = None
         self._progress_step = 0
         self._progress_job: str | None = None
         self._ffmpeg_path = self._locate_ffmpeg()
@@ -180,6 +193,7 @@ class FixerAudioApp:
         self._build_ui()
         self.root.after(50, self._apply_windows_style)
         self.root.after(450, self._check_ffmpeg_on_startup)
+        self.root.after(1600, self._start_update_check)
 
     def _center_window(self) -> None:
         screen_w = self.root.winfo_screenwidth()
@@ -329,7 +343,7 @@ class FixerAudioApp:
             self.footer_mode_label.configure(text="STEREO REMUX  •  AAC 2.0")
         else:
             self.metadata_panel.pack(fill="both", expand=True)
-            self.status.set("Selecione arquivos de áudio para limpar")
+            self.status.set("Selecione arquivos de áudio ou vídeo para limpar")
             self.footer_mode_label.configure(text="METADATA CLEAN  •  STREAM COPY")
         self.percentual.set("—")
         self._draw_progress(0)
@@ -399,7 +413,7 @@ class FixerAudioApp:
         ).pack(fill="x")
         tk.Label(
             content,
-            text="Remova tags incorporadas sem recodificar o áudio.",
+            text="Remova tags incorporadas sem recodificar áudio ou vídeo.",
             bg=COLORS["bg"],
             fg=COLORS["muted"],
             font=(FONT_UI, 11),
@@ -409,7 +423,7 @@ class FixerAudioApp:
 
         tk.Label(
             content,
-            text="Arquivos de áudio",
+            text="Arquivos de áudio ou vídeo",
             bg=COLORS["bg"],
             fg=COLORS["text"],
             font=(FONT_UI, 10, "bold"),
@@ -487,6 +501,32 @@ class FixerAudioApp:
         close.pack(side="right", fill="y")
         minimize = self._title_button(titlebar, "−", self._minimize)
         minimize.pack(side="right", fill="y")
+
+        self.update_badge = tk.Frame(titlebar, bg=COLORS["titlebar"], cursor="hand2")
+        dot = tk.Canvas(
+            self.update_badge,
+            width=12,
+            height=12,
+            bg=COLORS["titlebar"],
+            bd=0,
+            highlightthickness=0,
+            cursor="hand2",
+        )
+        dot.create_oval(2, 2, 10, 10, fill=COLORS["primary"], outline="")
+        dot.pack(side="left", padx=(10, 4))
+        update_label = tk.Label(
+            self.update_badge,
+            text="NOVA VERSÃO",
+            bg=COLORS["titlebar"],
+            fg=COLORS["muted"],
+            font=(FONT_UI, 8, "bold"),
+            cursor="hand2",
+        )
+        update_label.pack(side="left", padx=(0, 10))
+        for widget in (self.update_badge, dot, update_label):
+            widget.bind("<Button-1>", lambda _event: self._offer_update_download())
+            widget.bind("<Enter>", lambda _event: update_label.configure(fg=COLORS["text"]))
+            widget.bind("<Leave>", lambda _event: update_label.configure(fg=COLORS["muted"]))
 
     def _title_button(self, master: tk.Misc, text: str, command, hover: str | None = None) -> tk.Label:
         label = tk.Label(
@@ -629,10 +669,12 @@ class FixerAudioApp:
     def selecionar_arquivos_metadados(self) -> None:
         file_paths = filedialog.askopenfilenames(
             parent=self.root,
-            title="Selecione os arquivos de áudio",
+            title="Selecione os arquivos de áudio ou vídeo",
             initialdir=self._downloads_folder(),
             filetypes=(
-                ("Arquivos de áudio", "*.mp3 *.flac *.wav *.m4a *.aac *.ogg *.opus *.wma"),
+                ("Arquivos de mídia", MEDIA_FILE_PATTERNS),
+                ("Vídeos", "*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.wmv *.flv *.ts *.mts *.m2ts *.mpeg *.mpg"),
+                ("Áudios", "*.mp3 *.flac *.wav *.m4a *.aac *.ogg *.opus *.wma"),
                 ("Todos os arquivos", "*.*"),
             ),
         )
@@ -784,6 +826,140 @@ class FixerAudioApp:
             parent=self.root,
         )
 
+    def _start_update_check(self) -> None:
+        threading.Thread(target=self._check_latest_release, daemon=True).start()
+
+    def _check_latest_release(self) -> None:
+        try:
+            request = urllib.request.Request(
+                GITHUB_LATEST_RELEASE_API,
+                headers={
+                    "Accept": "application/vnd.github+json",
+                    "User-Agent": f"FixerAudioAMD/{APP_VERSION}",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+            )
+            with urllib.request.urlopen(request, timeout=12) as response:
+                release = json.load(response)
+            latest_version = str(release.get("tag_name", "")).strip()
+            if self._version_key(latest_version) <= self._version_key(APP_VERSION):
+                return
+            asset = next(
+                (
+                    item
+                    for item in release.get("assets", [])
+                    if item.get("name") == UPDATE_ASSET_NAME and item.get("browser_download_url")
+                ),
+                None,
+            )
+            if not asset:
+                return
+            update = {
+                "version": latest_version,
+                "url": str(asset["browser_download_url"]),
+                "digest": asset.get("digest"),
+                "size": asset.get("size"),
+            }
+            self.root.after(0, self._show_update_badge, update)
+        except Exception:
+            return
+
+    @staticmethod
+    def _version_key(version: str) -> tuple[int, ...]:
+        clean = version.strip().lower().lstrip("v").split("-", 1)[0]
+        parts: list[int] = []
+        for part in clean.split("."):
+            digits = "".join(character for character in part if character.isdigit())
+            parts.append(int(digits) if digits else 0)
+        return tuple((parts + [0, 0, 0])[:3])
+
+    def _show_update_badge(self, update: dict[str, str | int | None]) -> None:
+        self._available_update = update
+        if not self.update_badge.winfo_ismapped():
+            self.update_badge.pack(side="right", fill="y", padx=(0, 4))
+
+    def _offer_update_download(self) -> None:
+        update = self._available_update
+        if not update or self._update_download_active:
+            return
+        if self._conversion_active or self._metadata_active or self._download_active:
+            messagebox.showinfo(
+                "Atualização disponível",
+                "Conclua a operação atual antes de instalar a nova versão.",
+                parent=self.root,
+            )
+            return
+        version = str(update["version"])
+        if not messagebox.askyesno(
+            "Atualização disponível",
+            f"A versão {version} está disponível.\n\n"
+            "Deseja baixar e abrir o instalador agora?",
+            parent=self.root,
+        ):
+            return
+        self._update_download_active = True
+        self._set_controls_enabled(False)
+        self.convert_button.configure_state(False)
+        self.metadata_clean_button.configure_state(False)
+        self._draw_progress(0)
+        self._set_status("working", f"Baixando atualização {version}", "0%")
+        threading.Thread(target=self._download_update, args=(update,), daemon=True).start()
+
+    def _download_update(self, update: dict[str, str | int | None]) -> None:
+        version = str(update["version"]).replace("/", "-").replace("\\", "-")
+        installer = Path(tempfile.gettempdir()) / f"FixerAudioAMD-Setup-{version}.exe"
+        try:
+            request = urllib.request.Request(
+                str(update["url"]),
+                headers={"User-Agent": f"FixerAudioAMD/{APP_VERSION}"},
+            )
+            digest = hashlib.sha256()
+            with urllib.request.urlopen(request, timeout=60) as response, installer.open("wb") as destination:
+                total = int(response.headers.get("Content-Length", "0")) or int(update.get("size") or 0)
+                downloaded = 0
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    destination.write(chunk)
+                    digest.update(chunk)
+                    downloaded += len(chunk)
+                    if total:
+                        self.root.after(0, self._update_update_progress, min(downloaded / total, 0.99))
+
+            expected_digest = str(update.get("digest") or "")
+            if expected_digest.startswith("sha256:"):
+                expected_sha256 = expected_digest.removeprefix("sha256:").lower()
+                if digest.hexdigest().lower() != expected_sha256:
+                    raise RuntimeError("A verificação de segurança da atualização falhou.")
+            self.root.after(0, self._launch_update_installer, str(installer))
+        except Exception as error:
+            installer.unlink(missing_ok=True)
+            self.root.after(0, self._update_download_failed, str(error))
+
+    def _update_update_progress(self, fraction: float) -> None:
+        self._draw_progress(fraction)
+        self._set_status("working", "Baixando atualização", f"{max(1, min(round(fraction * 100), 99))}%")
+
+    def _launch_update_installer(self, installer_path: str) -> None:
+        try:
+            os.startfile(installer_path)
+        except OSError as error:
+            self._update_download_failed(str(error))
+            return
+        self.root.destroy()
+
+    def _update_download_failed(self, error: str) -> None:
+        self._update_download_active = False
+        self._restore_controls()
+        self._draw_progress(0)
+        self._set_status("error", "Não foi possível baixar a atualização", "ERRO")
+        messagebox.showerror(
+            "Falha na atualização",
+            f"Não foi possível baixar ou validar a nova versão.\n\n{error}",
+            parent=self.root,
+        )
+
     @staticmethod
     def _subprocess_options() -> dict[str, object]:
         if os.name != "nt":
@@ -857,7 +1033,7 @@ class FixerAudioApp:
         if not valid_files:
             messagebox.showwarning(
                 APP_TITLE,
-                "Selecione pelo menos um arquivo de áudio válido.",
+                "Selecione pelo menos um arquivo de áudio ou vídeo válido.",
                 parent=self.root,
             )
             return
@@ -871,7 +1047,7 @@ class FixerAudioApp:
         if not messagebox.askyesno(
             "Confirmar limpeza",
             f"Remover os metadados incorporados de {count} arquivo(s)?\n\n"
-            "O áudio não será recodificado e não perderá qualidade.\n"
+            "O áudio e o vídeo não serão recodificados.\n"
             "Os próprios arquivos serão substituídos e nenhum backup será criado.",
             parent=self.root,
         ):
@@ -901,33 +1077,7 @@ class FixerAudioApp:
             temporary_path = Path(temporary_handle.name)
             temporary_handle.close()
             temporary_path.unlink(missing_ok=True)
-            command = [
-                ffmpeg,
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-nostdin",
-                "-y",
-                "-i",
-                str(file_path),
-                "-map",
-                "0:a",
-                "-map_metadata",
-                "-1",
-                "-map_metadata:s",
-                "-1",
-                "-map_chapters",
-                "-1",
-                "-c:a",
-                "copy",
-                "-fflags",
-                "+bitexact",
-                "-flags:a",
-                "+bitexact",
-            ]
-            if file_path.suffix.lower() == ".mp3":
-                command.extend(("-id3v2_version", "0"))
-            command.append(str(temporary_path))
+            command = self._metadata_cleanup_command(ffmpeg, file_path, temporary_path)
             try:
                 result = subprocess.run(
                     command,
@@ -955,6 +1105,41 @@ class FixerAudioApp:
             self.root.after(0, self._update_metadata_progress, fraction, index, len(files))
 
         self.root.after(0, self._metadata_cleanup_complete, success_count, errors)
+
+    @staticmethod
+    def _metadata_cleanup_command(ffmpeg: str, source: Path, destination: Path) -> list[str]:
+        command = [
+            ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-nostdin",
+            "-y",
+            "-i",
+            str(source),
+            "-map",
+            "0:V?",
+            "-map",
+            "0:a?",
+            "-map",
+            "0:s?",
+            "-map_metadata",
+            "-1",
+            "-map_metadata:s",
+            "-1",
+            "-map_chapters",
+            "-1",
+            "-c",
+            "copy",
+            "-fflags",
+            "+bitexact",
+            "-flags:a",
+            "+bitexact",
+        ]
+        if source.suffix.lower() == ".mp3":
+            command.extend(("-id3v2_version", "0"))
+        command.append(str(destination))
+        return command
 
     def _update_metadata_progress(self, fraction: float, current: int, total: int) -> None:
         self._draw_progress(fraction)
@@ -1014,7 +1199,12 @@ class FixerAudioApp:
             self._draw_progress(0)
 
     def _operation_active(self) -> bool:
-        return self._conversion_active or self._metadata_active or self._download_active
+        return (
+            self._conversion_active
+            or self._metadata_active
+            or self._download_active
+            or self._update_download_active
+        )
 
     def _restore_controls(self) -> None:
         self._set_controls_enabled(True)
@@ -1082,6 +1272,8 @@ class FixerAudioApp:
 
 
 def main() -> None:
+    if os.name == "nt":
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("SCamposs.FixerAudioAMD")
     load_private_fonts()
     root = tk.Tk()
     FixerAudioApp(root)
