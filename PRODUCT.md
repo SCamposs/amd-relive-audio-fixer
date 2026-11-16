@@ -10,7 +10,7 @@ Windows users who record clips with AMD ReLive and want a small utility for repa
 
 ## Product Purpose
 
-Make two recurring media cleanup tasks fast and explicit: convert problematic 7.1 ReLive audio to stereo, and remove embedded metadata without re-encoding the media streams.
+Make recurring media tasks fast and explicit: repair ReLive audio, remove embedded metadata, extract audio and prepare compatible MP4 clips, using a batch queue with cancellation and per-file results.
 
 ## Brand Personality
 

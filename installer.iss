@@ -1,5 +1,5 @@
 #define MyAppName "Fixer de Áudio AMD ReLive"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "2.0.0"
 #define MyAppExeName "FixerAudioAMD.exe"
 
 [Setup]
@@ -33,7 +33,9 @@ Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortugue
 Name: "desktopicon"; Description: "Criar um atalho na área de trabalho"; GroupDescription: "Atalhos adicionais:"; Flags: unchecked
 
 [Files]
-Source: "FixerAudioAMD.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\FixerAudioAMD\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "THIRD_PARTY.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
