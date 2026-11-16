@@ -1,5 +1,5 @@
 #define MyAppName "Fixer de Áudio AMD ReLive"
-#define MyAppVersion "2.0.0"
+#define MyAppVersion "2.0.1"
 #define MyAppExeName "FixerAudioAMD.exe"
 
 [Setup]
@@ -36,6 +36,11 @@ Name: "desktopicon"; Description: "Criar um atalho na área de trabalho"; GroupD
 Source: "dist\FixerAudioAMD\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "THIRD_PARTY.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+[InstallDelete]
+; Remove incompatible libraries accidentally shipped in 2.0.0.
+Type: files; Name: "{app}\_internal\icuuc.dll"
+Type: files; Name: "{app}\_internal\icudt78.dll"
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
