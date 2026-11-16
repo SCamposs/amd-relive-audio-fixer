@@ -1,0 +1,8 @@
+@supports not selector(::-webkit-scrollbar){*{scrollbar-width:thin;scrollbar-color:#454550 #101014}}
+body{height:100vh;overflow:hidden}.app-shell{height:100vh;min-height:0}main{min-height:0;overflow-y:auto;flex:1}.titlebar,footer{flex-shrink:0}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:#101014;border-radius:8px}
+::-webkit-scrollbar-thumb{background:#454550;border:2px solid #101014;border-radius:8px;min-height:28px}
+::-webkit-scrollbar-thumb:hover{background:#696975}
+::-webkit-scrollbar-thumb:active{background:#898995}
+::-webkit-scrollbar-corner{background:#101014}

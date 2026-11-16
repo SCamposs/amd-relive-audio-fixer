@@ -1,5 +1,5 @@
 #define MyAppName "Fixer de Áudio AMD ReLive"
-#define MyAppVersion "2.0.1"
+#define MyAppVersion "3.0.0"
 #define MyAppExeName "FixerAudioAMD.exe"
 
 [Setup]
@@ -38,6 +38,8 @@ Source: "THIRD_PARTY.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [InstallDelete]
+; This directory contains only app-managed runtime files; replace it on upgrades.
+Type: filesandordirs; Name: "{app}\_internal"
 ; Remove incompatible libraries accidentally shipped in 2.0.0.
 Type: files; Name: "{app}\_internal\icuuc.dll"
 Type: files; Name: "{app}\_internal\icudt78.dll"

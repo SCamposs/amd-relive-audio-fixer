@@ -5,7 +5,8 @@ import os
 
 root = Path(__file__).resolve().parent.parent
 bundle = root / 'dist/FixerAudioAMD/_internal'
-assert (bundle / 'PySide6/Qt6Core.dll').is_file(), 'QtCore missing'
+assert (bundle / 'frontend/dist/index.html').is_file(), 'Frontend missing'
+assert not list(bundle.rglob('Qt6Core.dll')), 'Obsolete Qt runtime bundled'
 assert not list(bundle.rglob('icuuc.dll')), 'Foreign ICU bundled'
 assert not list(bundle.rglob('icudt78.dll')), 'Foreign ICU data bundled'
 if os.name == 'nt':

@@ -1,4 +1,4 @@
-from mediafix.window import main
+from mediafix.desktop import main
 
 if __name__ == "__main__":
     main()

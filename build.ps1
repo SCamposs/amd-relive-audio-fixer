@@ -1,5 +1,9 @@
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
+& npm.cmd ci --prefix frontend
+if ($LASTEXITCODE) { throw 'Frontend dependencies failed' }
+& npm.cmd run build --prefix frontend
+if ($LASTEXITCODE) { throw 'Frontend build failed' }
 $originalPath = $env:PATH
 try {
     # Dependency discovery must not use DLLs from unrelated tools on the host PATH.

@@ -1,6 +1,9 @@
 # Third-party components
 
-- Qt for Python / PySide6 Essentials and Shiboken6: LGPL-3.0 / GPL / commercial licensing. Distributed Qt libraries remain separate DLLs in the installed application and can be replaced with compatible builds. Sources and license information: https://code.qt.io/pyside/pyside-setup.git and https://www.qt.io/licensing/open-source-lgpl-obligations
+- React / React DOM and Base UI: MIT, https://react.dev and https://base-ui.com
+- Lucide React icons: ISC, https://lucide.dev
+- pywebview: BSD-3-Clause, https://pywebview.flowrl.com ; Python.NET: MIT, https://pythonnet.github.io
+- Microsoft Edge WebView2: system runtime, https://developer.microsoft.com/microsoft-edge/webview2/
 - Python: Python Software Foundation License, https://docs.python.org/3/license.html
 - PyInstaller: GPL with bootloader exception, https://pyinstaller.org/en/stable/license.html
 - Barlow and JetBrains Mono: SIL Open Font License, included in fonts/.

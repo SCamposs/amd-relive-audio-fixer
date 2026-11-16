@@ -2,8 +2,9 @@ from pathlib import Path
 
 root = Path(SPECPATH).parent
 a = Analysis([str(root / 'corretor_audio.py')], pathex=[str(root)],
-             binaries=[], datas=[(str(root / 'assets'), 'assets'), (str(root / 'fonts'), 'fonts')],
-             hiddenimports=[], hookspath=[], runtime_hooks=[], excludes=[], noarchive=False)
+             binaries=[], datas=[(str(root / 'assets'), 'assets'), (str(root / 'frontend/dist'), 'frontend/dist')],
+             hiddenimports=['webview.platforms.edgechromium', 'webview.platforms.winforms'], hookspath=[], runtime_hooks=[],
+             excludes=['PySide6', 'PyQt6', 'PyQt5', 'tkinter', 'webview.platforms.qt'], noarchive=False)
 # Qt 6.12 uses the Windows ICU ABI (unversioned exports). A third-party ICU
 # found on the build host PATH is not interchangeable with the system library.
 a.binaries = [entry for entry in a.binaries
